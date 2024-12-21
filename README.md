@@ -73,3 +73,5 @@ Cuarta Fase: Ejecución automatizada de operaciones (con cuidado).
 
 
 excelente. Vamos a Construir el sistema: por ahora ya he creado el proyecto (trader) y la app se llama Dashboard. El siguiente paso es: Modelos: Para guardar pares de mercado, precios históricos, y logs de transacciones.
+
+Que complicado es tener dos cuentas de github
