@@ -1,5 +1,3 @@
-# dashboard/views.py
-
 from django.shortcuts import render
 from .models import ArbitrageOpportunity
 

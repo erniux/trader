@@ -134,8 +134,18 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 CELERY_BEAT_SCHEDULE = {
-    'check_arbitrage_opportunities_realtime_every_2_seconds': {
-        'task': 'dashboard.tasks.check_arbitrage_opportunities_realtime',
-        'schedule': 2.0,  # cada 2 segundos
+    #'check_arbitrage_opportunities_realtime_every_2_seconds': {
+    #    'task': 'dashboard.tasks.check_arbitrage_opportunities_realtime',
+    #     'schedule': 2.0,  # cada 2 segundos
+    #},
+    'check-arbitrage-opportunities-every-5-minutes': {
+        'task': 'dashboard.tasks.check_arbitrage_opportunities',
+        'schedule': 300.0,  # Cada 5 minutos
+    },
+    'fetch-binance-prices-every-minute': {
+        'task': 'dashboard.tasks.fetch_binance_prices',
+        'schedule': 60.0,  # Cada minuto
     },
 }
+
+

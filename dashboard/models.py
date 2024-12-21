@@ -72,5 +72,11 @@ class ArbitrageOpportunity(models.Model):
     # Timestamp para cuándo se detectó la oportunidad
     detected_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        unique_together = ('pair_1', 'pair_2', 'pair_3')
+        indexes = [
+            models.Index(fields=['pair_1', 'pair_2', 'pair_3']),
+        ]
+
     def __str__(self):
-        return f"Oportunidad: {self.pair_1} -> {self.pair_2} -> {self.pair_3}, Ganancia: {self.profit}"
+        return f"Arbitrage: {self.pair_1} -> {self.pair_2} -> {self.pair_3} | Profit: {self.profit}"
