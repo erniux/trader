@@ -1,0 +1,39 @@
+# Entorno virtual
+venv/
+ENV/
+env/
+.venv/
+
+# Archivos de Python
+*.pyc
+__pycache__/
+
+# Base de datos
+db.sqlite3
+
+# Archivos de configuración
+.env
+.env.*
+
+# Directorios de Django
+staticfiles/
+media/
+
+# Archivos de Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# Sistema Operativo
+.DS_Store
+Thumbs.db
+
+# Otros
+*.swp
+*.swo
+
+#Base de datos
+data/
+
+commands.txt

@@ -1,0 +1,48 @@
+<!-- dashboard/templates/dashboard/arbitrage_opportunities_list.html -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Oportunidades de Arbitraje</title>
+    <style>
+        table {
+            width: 80%;
+            border-collapse: collapse;
+            margin: 25px 0;
+            font-size: 18px;
+            text-align: left;
+        }
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>Oportunidades de Arbitraje</h1>
+    <table>
+        <tr>
+            <th>Ruta</th>
+            <th>Ganancia (BTC)</th>
+            <th>Timestamp</th>
+        </tr>
+        {% for opp in opportunities %}
+        <tr>
+            <td>{{ opp.pair_1.base_currency }}/{{ opp.pair_1.quote_currency }} -> 
+                {{ opp.pair_2.base_currency }}/{{ opp.pair_2.quote_currency }} -> 
+                {{ opp.pair_3.base_currency }}/{{ opp.pair_3.quote_currency }}
+            </td>
+            <td>{{ opp.profit }}</td>
+            <td>{{ opp.detected_at }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="3">No hay oportunidades registradas.</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

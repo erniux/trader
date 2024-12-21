@@ -1,0 +1,12 @@
+asgiref==3.8.1
+Django==5.1
+sqlparse==0.5.3
+tzdata==2024.2
+psycopg2-binary>=2.8
+redis>=2.8
+celery>=5.0
+django-celery-beat>=2.6
+python-binance>=1.0
+python-dotenv>=0.0.1
+requests>=2.32
+
