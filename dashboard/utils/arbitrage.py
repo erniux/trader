@@ -107,7 +107,7 @@ def find_arbitrage_routes():
 
         # Validar si el DataFrame tiene datos antes de continuar
         if step2.empty:
-            print("No se encontraron triángulos en los datos proporcionados.")
+            logger.error(f"No se encontraron triángulos en los datos proporcionados.")
             return pd.DataFrame()
 
         # Paso 3: Filtrar triángulos válidos

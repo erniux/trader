@@ -85,11 +85,9 @@ def fetch_binance_prices():
             symbol = ticker['symbol']
             price = Decimal(ticker['lastPrice'])
             volume = Decimal(ticker['volume'])
-            print(f"SYMBOL {symbol}")
             
             # Buscar el símbolo correspondiente en la tabla Symbol
             symbol_id = Symbol.objects.get(symbol=symbol)
-            print(f"SYMBOL_ID {symbol_id}")
 
             # Validar si el precio o volumen son demasiado grandes
             if price >= Decimal('10000000000') or volume >= Decimal('10000000000'):
@@ -187,7 +185,6 @@ def check_arbitrage_opportunities():
             profit = calculate_profit(price_1, price_2, price_3, FEE_RATE, SLIPPAGE_RATE)
             logger.debug(f"Profit para la ruta: {profit}")
 
-            print(f"profit para la ruta: {symbol_1}::{price_1}->{symbol_2}::{price_2}->{symbol_3}::{price_3} PROFIT===>>> {profit}")
             if profit > 0:
                 logger.info(f"Oportunidad de arbitraje encontrada: {symbol_1} -> {symbol_2} -> {symbol_3}. Ganancia: {profit}")
 
