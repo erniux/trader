@@ -5,6 +5,7 @@ import time
 import logging
 import redis
 from binance import ThreadedWebsocketManager
+from dashboard.models import Symbol
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(
@@ -22,7 +23,8 @@ REDIS_HOST =  "redis"
 REDIS_PORT =  6379
 
 # Lista de símbolos a monitorear
-WATCHED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
+
+WATCHED_SYMBOLS = Symbol.objects.get('symbol') #["BTCUSDT", "ETHUSDT", "ETHBTC"]
 
 # --- INICIALIZACIÓN DE REDIS ---
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
@@ -43,10 +45,11 @@ def handle_socket_message(msg):
     last_price = msg.get("c")
 
     if symbol and last_price:
+        logger.warning(f"actualizando precio para {symbol} ::: {last_price}")
         # Guardamos el precio en Redis con la clave "price:SIMBOLO"
         key = f"price:{symbol}"
         r.set(key, last_price)
-        logger.info(f"[WS] Actualizado {symbol} => {last_price}")
+        #logger.info(f"[WS] Actualizado {symbol} => {last_price}")
     else:
         logger.warning(f"[WS] Mensaje recibido sin datos de precio válidos: {msg}")
 

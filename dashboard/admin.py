@@ -1,33 +1,34 @@
 from django.contrib import admin
-from .models import MarketPair, HistoricalPrice, TransactionLog, ArbitrageOpportunity
-
-
-@admin.register(MarketPair)
-class MarketPairAdmin(admin.ModelAdmin):
-    list_display = ('base_currency', 'quote_currency', 'exchange', 'is_active')
-    search_fields = ('base_currency', 'quote_currency', 'exchange')
-    list_filter = ('exchange', 'is_active')
+from .models import HistoricalPrice, TransactionLog, ArbitrageOpportunity, Symbol
 
 
 @admin.register(HistoricalPrice)
 class HistoricalPriceAdmin(admin.ModelAdmin):
-    list_display = ('market_pair', 'timestamp', 'price', 'volume')
-    search_fields = ('market_pair__base_currency', 'market_pair__quote_currency')
-    list_filter = ('market_pair',)
-    date_hierarchy = 'timestamp'
+    list_display = ('symbol', 'price', 'volume', 'timestamp')
+    list_filter = ('symbol', 'timestamp')
+    search_fields = ('symbol__symbol',)
 
 
 @admin.register(TransactionLog)
 class TransactionLogAdmin(admin.ModelAdmin):
-    list_display = ('market_pair', 'action', 'amount', 'price', 'fee', 'timestamp')
-    search_fields = ('market_pair__base_currency', 'market_pair__quote_currency', 'action')
-    list_filter = ('action', 'market_pair')
-    date_hierarchy = 'timestamp'
+    list_display = ('symbol', 'amount', 'action', 'price', 'timestamp')  
+    list_filter = ('symbol', 'action', 'timestamp')  
+    search_fields = ('symbol__symbol',)
 
 
 @admin.register(ArbitrageOpportunity)
 class ArbitrageOpportunityAdmin(admin.ModelAdmin):
-    list_display = ("pair_1", "pair_2", "pair_3", "route", "profit")
-    search_filter = ("pair_1", "pair_2", "pair_3","profit")
-    list_filter = ("route",)
+    list_display = ('symbol_1', 'symbol_2', 'symbol_3', 'profit', 'detected_at')
+    list_filter = ('symbol_1', 'symbol_2', 'symbol_3', 'detected_at')
+    search_fields = ('symbol_1__symbol', 'symbol_2__symbol', 'symbol_3__symbol')
     date_hierarchy = 'detected_at'
+
+
+@admin.register(Symbol)
+class SymbolAdmin(admin.ModelAdmin):
+    list_display = ("symbol", "base_asset", "quote_asset", "server_time")
+    search_filter = ("symbol", "base_asset", "quote_asset")
+    list_filter = ("symbol", "base_asset",)
+    date_hierarchy = 'server_time'
+
+ 

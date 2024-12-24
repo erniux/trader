@@ -2,9 +2,13 @@ import os
 from dotenv import load_dotenv
 from celery.schedules import crontab
 from pathlib import Path
+import environ
 
 # Cargar variables del archivo .env
 load_dotenv()
+
+env = environ.Env()
+environ.Env.read_env()  # Carga el archivo .env
 
 # Ahora puedes acceder a las variables de entorno
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
@@ -79,8 +83,12 @@ WSGI_APPLICATION = 'trader.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': env('POSTGRES_DB'),
+        'USER': env('POSTGRES_USER'),
+        'PASSWORD': env('POSTGRES_PASSWORD'),
+        'HOST': env('POSTGRES_HOST'),
+        'PORT': env('POSTGRES_PORT'),
     }
 }
 
@@ -103,6 +111,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+#docker exec -it postgres_db psql -U postgres -d postgres
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
@@ -114,7 +124,7 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
-
+TIME_ZONE = 'UTC' 
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
@@ -134,18 +144,19 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 CELERY_BEAT_SCHEDULE = {
-    #'check_arbitrage_opportunities_realtime_every_2_seconds': {
-    #    'task': 'dashboard.tasks.check_arbitrage_opportunities_realtime',
-    #     'schedule': 2.0,  # cada 2 segundos
-    #},
-    'check-arbitrage-opportunities-every-5-minutes': {
-        'task': 'dashboard.tasks.check_arbitrage_opportunities',
-        'schedule': 300.0,  # Cada 5 minutos
-    },
+#    'check-arbitrage-opportunities-every-5-minutes': {
+#        'task': 'dashboard.tasks.check_arbitrage_opportunities',
+#        #'schedule': 300.0,  # Cada 5 minutos
+#        'schedule': crontab(hour=0, minute=0) #Ejecutar a la media noche
+#    },
     'fetch-binance-prices-every-minute': {
         'task': 'dashboard.tasks.fetch_binance_prices',
         'schedule': 60.0,  # Cada minuto
     },
+#    'check_arbitrage_opportunities_realtime_every_2_seconds': {
+#       'task': 'dashboard.tasks.check_arbitrage_opportunities_realtime',
+#         'schedule': 2.0,  # cada 2 segundos
+#    },
 }
 
 

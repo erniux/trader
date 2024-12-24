@@ -3,6 +3,13 @@
 from decimal import Decimal
 from collections import defaultdict
 import logging
+import pandas as pd
+from dashboard.models import Symbol, HistoricalPrice
+import redis
+from binance.client import Client
+from .redis_service import get_price_from_redis
+
+redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +37,7 @@ def calculate_profit(price_a, price_b, price_c, fee_rate=Decimal('0.01'), slippa
         step1_final = step1_after_fee * (Decimal('1') - slippage_rate)
 
         # Paso 2: Convertir pair2.base -> pair2.quote
-        step2 = step1_final * price_b
+        step2 = step1_final / price_b
         step2_after_fee = step2 * (Decimal('1') - fee_rate)
         step2_final = step2_after_fee * (Decimal('1') - slippage_rate)
 
@@ -40,11 +47,9 @@ def calculate_profit(price_a, price_b, price_c, fee_rate=Decimal('0.01'), slippa
         final_amount = step3_after_fee * (Decimal('1') - slippage_rate)
 
         # Calcular la ganancia
-        profit = final_amount - initial_amount
-        logger.warning(f"price_a::: {price_a}, price_b::: {price_b}, price_c ::: {price_c}")
-        logger.warning(f"---> initial_amount ---> {initial_amount}")
-        logger.warning(f"---> final_amount ---> {final_amount}")
-        logger.warning(f"---> PROFIT!!!!!! ---> {profit}")
+        profit = final_amount - step1
+        if (profit > 0 and profit > step1):
+            logger.warning(f"---> PROFIT SEGUN YO!!!!!! ---> {profit-step1}")
 
 
         return profit
@@ -54,45 +59,110 @@ def calculate_profit(price_a, price_b, price_c, fee_rate=Decimal('0.01'), slippa
         return Decimal('0')
 
 
-def find_arbitrage_routes(market_pairs):
+def find_arbitrage_routes():
     """
-    Encuentra todas las rutas posibles de arbitraje triangular.
-
-    Parámetros:
-        market_pairs (QuerySet): QuerySet de MarketPair disponibles.
+    Encuentra triángulos de arbitraje utilizando los datos reales de Symbol.
 
     Retorna:
-        List[List[MarketPair]]: Lista de rutas, donde cada ruta es una lista de tres MarketPair.
+        List[Dict]: Lista de rutas de arbitraje (triángulos) válidas.
     """
-    # Construir el grafo
-    graph = defaultdict(list)
-    for pair in market_pairs:
-        graph[pair.base_currency].append(pair.quote_currency)
-    
-    routes = []
-    visited = set()
+    try:
+        # Cargar todos los símbolos de la base de datos
+        symbols_queryset = Symbol.objects.all().values('symbol', 'base_asset', 'quote_asset')
+        symbols_df = pd.DataFrame(list(symbols_queryset))
 
-    # Buscar triángulos en el grafo
-    for start in graph:
-        for intermediate in graph[start]:
-            if intermediate == start:
-                continue
-            for end in graph[intermediate]:
-                if end == intermediate or end == start:
-                    continue
-                if start in graph[end]:
-                    # Encontramos un triángulo: start -> intermediate -> end -> start
-                    # Ahora, obtener los MarketPair correspondientes
-                    try:
-                        pair1 = market_pairs.get(base_currency=start, quote_currency=intermediate)
-                        pair2 = market_pairs.get(base_currency=intermediate, quote_currency=end)
-                        pair3 = market_pairs.get(base_currency=end, quote_currency=start)
-                        route = [pair1, pair2, pair3]
-                        # Evitar rutas duplicadas (independientemente del orden)
-                        route_ids = tuple(sorted([pair1.id, pair2.id, pair3.id]))
-                        if route_ids not in visited:
-                            routes.append(route)
-                            visited.add(route_ids)
-                    except Exception as e:
-                        continue
-    return routes
+        
+        # Crear pares invertidos y agregarlos al DataFrame
+        inverted_pairs = symbols_df.copy()
+        inverted_pairs['symbol'] = inverted_pairs['symbol'] + '_INV'
+        inverted_pairs = inverted_pairs.rename(
+            columns={'base_asset': 'quote_asset', 'quote_asset': 'base_asset'}
+        )
+        augmented_df = pd.concat([symbols_df, inverted_pairs])
+
+        # Paso 1: Crear conexiones symbol1 -> symbol2
+        step1 = augmented_df.merge(
+            augmented_df,
+            left_on='quote_asset',
+            right_on='base_asset',
+            suffixes=('_1', '_2')
+        )
+
+
+        # Paso 2: Renombrar columnas del DataFrame original antes del merge
+        symbols_renamed = augmented_df.rename(
+            columns={
+                'symbol': 'symbol_3',
+                'base_asset': 'base_asset_3',
+                'quote_asset': 'quote_asset_3'
+            }
+        )
+
+        # Crear conexiones symbol2 -> symbol3 que cierren el triángulo
+        step2 = step1.merge(
+            symbols_renamed,
+            left_on='quote_asset_2',
+            right_on='base_asset_3'
+        )
+
+        # Validar si el DataFrame tiene datos antes de continuar
+        if step2.empty:
+            print("No se encontraron triángulos en los datos proporcionados.")
+            return pd.DataFrame()
+
+        # Paso 3: Filtrar triángulos válidos
+        valid_triangles = step2[
+            step2['quote_asset_3'] == step2['base_asset_1']  # Cierra el triángulo
+        ]
+
+        # Paso 4: Seleccionar columnas relevantes
+        routes = valid_triangles[[
+            'symbol_1', 'symbol_2', 'symbol_3',  # Nombres de los símbolos
+            'base_asset_1', 'quote_asset_1',     # Primera conexión
+            'quote_asset_2',                     # Segunda conexión
+            'quote_asset_3'                      # Tercera conexión
+        ]]
+
+        return routes.reset_index(drop=True)
+
+    except Exception as e:
+        logger.error(f"Error al encontrar rutas de arbitraje: {e}")
+        return pd.DataFrame()
+    
+
+def get_price(symbol, binance_client):
+    """
+    Obtiene el precio de un símbolo desde Redis o la API de Binance,
+    manejando símbolos invertidos (_INV).
+
+    Parámetros:
+        symbol (str): El símbolo para el cual obtener el precio.
+        binance_client (Client): Cliente de Binance para obtener datos en tiempo real.
+
+    Retorna:
+        float: El precio más reciente, o None si no existe.
+    """
+    # Verificar si el símbolo está invertido
+    is_inverted = symbol.endswith("_INV")
+    base_symbol = symbol.replace("_INV", "") if is_inverted else symbol
+
+    # 1. Intentar obtener el precio desde Redis
+    try:
+        key = f"price:{base_symbol}"  # Clave en Redis
+        price = redis_client.get(key)
+        if price:
+            price = float(price)
+            # Si el símbolo es invertido, calcular el inverso
+            return 1 / price if is_inverted else price
+    except Exception as e:
+        logger.error(f"Error al obtener el precio de {base_symbol} desde Redis: {e}")
+
+    # 2. Obtener el precio desde Binance si no está en Redis
+    try:
+        ticker = binance_client.get_symbol_ticker(symbol=base_symbol)
+        price = float(ticker['price'])
+        # Si el símbolo es invertido, calcular el inverso
+        return 1 / price if is_inverted else price
+    except Exception as e:
+        logger.error(f"Error al obtener el precio de {base_symbol} desde Binance: {e}")
+        return None

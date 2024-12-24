@@ -2,22 +2,21 @@
 import os
 from celery import shared_task
 from binance.client import Client
-from .models import MarketPair, HistoricalPrice, ArbitrageOpportunity
-from .utils.binance_service import get_all_tickers
-from .utils.arbitrage import calculate_profit, find_arbitrage_routes
-from .utils.redis_service import get_price_from_redis
+from .models import HistoricalPrice, ArbitrageOpportunity, Symbol
+from .utils.arbitrage import calculate_profit, find_arbitrage_routes, get_price
+
 from django.db.models import F
 from django.utils.timezone import now
 from django.db import transaction, IntegrityError
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 import logging
-import redis
+import time
+import pytz
+
 
 logger = logging.getLogger(__name__)
 
-#REDIS_HOST = "localhost"
-#REDIS_PORT = 6379
-#r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
 # Configuración de la API de Binance Testnet
 BINANCE_TESTNET_API_KEY = os.getenv('BINANCE_TESTNET_API_KEY')
@@ -27,6 +26,50 @@ TESTNET_BASE_URL = os.getenv('TESTNET_BASE_URL')  # URL del Testnet
 # Cliente configurado para el entorno de pruebas
 client = Client(BINANCE_TESTNET_API_KEY, BINANCE_TESTNET_API_SECRET)
 client.API_URL = TESTNET_BASE_URL
+
+
+@shared_task
+def fetch_and_save_symbols_with_time():
+    """
+    Obtiene información de símbolos desde Binance, incluye el tiempo del servidor,
+    y guarda los datos en la base de datos tabla Symbol
+    """
+    try:
+        # Obtener datos de exchange info
+        exchange_info = client.get_exchange_info()
+        server_time = client.get_server_time()['serverTime']
+
+        # Convertir server_time a datetime con zona horaria
+        utc_tz = pytz.UTC  # Zona horaria UTC
+        server_datetime = datetime.fromtimestamp(server_time / 1000, tz=utc_tz)
+
+        # Procesar símbolos con tiempo del servidor
+        symbols_data = [
+            {
+                'symbol': symbol['symbol'],
+                'baseAsset': symbol['baseAsset'],
+                'quoteAsset': symbol['quoteAsset'],
+                'server_time': server_datetime
+            }
+            for symbol in exchange_info['symbols']
+        ]
+
+        # Guardar en PostgreSQL usando Django ORM
+        for data in symbols_data:
+            Symbol.objects.update_or_create(
+                symbol=data['symbol'],
+                defaults={
+                    'base_asset': data['baseAsset'],
+                    'quote_asset': data['quoteAsset'],
+                    'server_time': data['server_time']
+                }
+            )
+
+        logger.info(f"Se actualizaron {len(symbols_data)} símbolos en la base de datos con server_time {server_datetime}.")
+
+    except Exception as e:
+        logger.error(f"Error al obtener y guardar símbolos: {e}")
+        raise e
 
 
 @shared_task
@@ -42,192 +85,181 @@ def fetch_binance_prices():
             symbol = ticker['symbol']
             price = Decimal(ticker['lastPrice'])
             volume = Decimal(ticker['volume'])
+            print(f"SYMBOL {symbol}")
+            
+            # Buscar el símbolo correspondiente en la tabla Symbol
+            symbol_id = Symbol.objects.get(symbol=symbol)
+            print(f"SYMBOL_ID {symbol_id}")
 
-            # Verifica si el par existe en la base de datos
-            base_currency, quote_currency = symbol[:-3], symbol[-3:]  # Ejemplo: BTCUSDT -> BTC, USDT
-            #print(base_currency, quote_currency)
-            pair, created = MarketPair.objects.get_or_create(
-                base_currency=base_currency,
-                quote_currency=quote_currency,
-                exchange='Binance'
+            # Validar si el precio o volumen son demasiado grandes
+            if price >= Decimal('10000000000') or volume >= Decimal('10000000000'):
+                logger.warning(f"Valor fuera de rango: SYMBOL={symbol}, PRICE={price}, VOLUME={volume}")
+                continue
+
+            # Guardar el precio histórico
+            HistoricalPrice.objects.update_or_create(
+                symbol=symbol_id,
+                timestamp=now(),
+                defaults={
+                    'price': price,
+                    'volume': volume
+                }
             )
 
-            # Guardamos el precio histórico
-
-            HistoricalPrice.objects.create(
-                market_pair=pair,
-                price=price,
-                volume=volume,
-                timestamp=now()
-            )
-
+        except Symbol.DoesNotExist:
+            logger.warning(f"El símbolo {symbol} no existe en la base de datos.")
+            continue
+        except Decimal.InvalidOperation:
+            logger.warning(f"Error al convertir precios o volumen para {symbol}: {ticker}")
+            continue
         except Exception as e:
-            # Que mande error pero que continue con los demas tickers
-            logger.warning(f"Error al consultar precios de Binance: {e},  {ticker}, {InvalidOperation}")
+            logger.warning(f"Error al consultar precios de Binance: {e}, {ticker}")
             continue
 
 
 @shared_task
-def check_arbitrage_opportunities(): 
+def check_arbitrage_opportunities():
     """
-    Realiza los cálculos de arbitraje triangular con los precios históricos
+    Realiza los cálculos de arbitraje triangular con los precios actuales
     y verifica si hay oportunidades de ganancia.
     """
-    #Parametros de trading
-    FEE_RATE = Decimal(0.01)   #0.1 % De Comision
-    SLIPPAGE_RATE = Decimal('0.0005') #=.05% de deslizamiento de precios
-    
-    logger.info("Iniciando el cálculo de oportunidades de arbitraje...")
-    
-    try:    
-        market_pairs = MarketPair.objects.filter(exchange='Binance')
+    # Parámetros de trading
+    FEE_RATE = Decimal('0.001')  # 0.1 % Comisión
+    SLIPPAGE_RATE = Decimal('0.0005')  # 0.05% Deslizamiento de precios
 
-        #Encontrar todos los MarketPair disponibles
-        routes = find_arbitrage_routes(market_pairs)
-        logger.debug(f"Profit calculado para la ruta ::: {pair1}->{pair2}->{pair3}:: {profit}")
+    logger.info(f"Iniciando el cálculo de oportunidades de arbitraje...{time.time()}")
 
-        # Iterar sobre todos los posibles ciclos de tres pares
-        for route in routes:
-            pair1, pair2, pair3 = route
-            try:
-                price1 = HistoricalPrice.objects.filter(market_pairs=pair1).latest('detected_at').price
-                price2 = HistoricalPrice.objects.filter(market_pair=pair2).latest('detected_at').price
-                price3 = HistoricalPrice.objects.filter(market_pair=pair3).latest('detected_at').price
-                
-                # Calcular la ganancia potencial
-                profit = calculate_profit(price1, price2, price3, Decimal('0.01'), Decimal('0.0005'))
-                logger.debug(f"Profit calculado para la ruta {pair1} -> {pair2} -> {pair3}: {profit}")
-                
-            except (HistoricalPrice.DoesNotExist, InvalidOperation) as e:
-                logger.warning(f"datos de precio no disponible o invalidos para {pair1}->{pair2}->{pair3}::: {e}")
+    # Encontrar rutas de arbitraje
+    routes = find_arbitrage_routes()
+    if routes.empty:
+        logger.info("No se encontraron rutas de arbitraje.")
+        return
+
+    for _, route in routes.iterrows():
+        symbol_1 = route['symbol_1']
+        symbol_2 = route['symbol_2']
+        symbol_3 = route['symbol_3']
+        logger.debug(f"Procesando ruta: {symbol_1} -> {symbol_2} -> {symbol_3}")
+
+        try:
+            # Manejo de símbolos invertidos
+            if symbol_2.endswith("_INV"):
+                symbol_2_base = symbol_2.replace("_INV", "")
+                symbol_2_obj = Symbol.objects.filter(symbol=symbol_2_base).first()
+                if not symbol_2_obj:
+                    logger.warning(f"El símbolo base {symbol_2_base} no existe en la base de datos.")
+                    continue
+            else:
+                symbol_2_obj = Symbol.objects.filter(symbol=symbol_2).first()
+                if not symbol_2_obj:
+                    logger.warning(f"El símbolo {symbol_2} no existe en la base de datos.")
+                    continue
+
+            if symbol_3.endswith("_INV"):
+                symbol_3_base = symbol_3.replace("_INV", "")
+                symbol_3_obj = Symbol.objects.filter(symbol=symbol_3_base).first()
+                if not symbol_3_obj:
+                    logger.warning(f"El símbolo base {symbol_3_base} no existe en la base de datos.")
+                    continue
+            else:
+                symbol_3_obj = Symbol.objects.filter(symbol=symbol_3).first()
+                if not symbol_3_obj:
+                    logger.warning(f"El símbolo {symbol_3} no existe en la base de datos.")
+                    continue
+
+            # Obtener los objetos Symbol para los símbolos 1 y 3
+            symbol_1_obj = Symbol.objects.filter(symbol=symbol_1).first()
+    
+            if not symbol_1_obj or not symbol_3_obj:
+                logger.warning(f"Uno o más símbolos no existen: {symbol_1}, {symbol_3}")
                 continue
-        
-            if profit > 0:
-                logger.info(
-                    f"Oportunidad de arbitraje encontrada: {pair1.base_currency} -> "
-                    f"{pair2.base_currency} -> {pair3.base_currency}. Ganancia: {profit}"
-                )
 
-                # Guardar la oportunidad
+            # Obtener los precios de los símbolos
+            price_1 = get_price(symbol_1, client)
+            price_2 = 1 / get_price(symbol_2_base, client) if symbol_2.endswith("_INV") else get_price(symbol_2, client)
+            price_3 = 1 / get_price(symbol_3_base, client) if symbol_3.endswith("_INV") else get_price(symbol_3, client) 
+
+            if not price_1 or not price_2 or not price_3:
+                logger.warning(f"Precios no disponibles para la ruta: {symbol_1} -> {symbol_2} -> {symbol_3}")
+                continue
+
+            # Calcular ganancia potencial
+            profit = calculate_profit(price_1, price_2, price_3, FEE_RATE, SLIPPAGE_RATE)
+            logger.debug(f"Profit para la ruta: {profit}")
+
+            print(f"profit para la ruta: {symbol_1}::{price_1}->{symbol_2}::{price_2}->{symbol_3}::{price_3} PROFIT===>>> {profit}")
+            if profit > 0:
+                logger.info(f"Oportunidad de arbitraje encontrada: {symbol_1} -> {symbol_2} -> {symbol_3}. Ganancia: {profit}")
+
+                # Guardar la oportunidad en la base de datos
                 try:
                     with transaction.atomic():
-                        # Intentar obtener el objeto con un lock
                         opportunity, created = ArbitrageOpportunity.objects.select_for_update().get_or_create(
-                            pair_1=pair1,
-                            pair_2=pair2,
-                            pair_3=pair3,
-                            defaults={'profit': profit}
+                            symbol_1=symbol_1_obj,
+                            symbol_2=symbol_2_obj,
+                            symbol_3=symbol_3_obj,
+                            defaults={
+                                'route': f"{symbol_1} -> {symbol_2} -> {symbol_3}",
+                                'profit': profit
+                            }
                         )
                         if not created:
                             # Actualizar el profit si ya existe
                             opportunity.profit = profit
                             opportunity.save()
-                    logger.info(
-                        f"Oportunidad de arbitraje encontrada: {pair1.base_currency} -> "
-                        f"{pair2.base_currency} -> {pair3.base_currency}. Ganancia: {profit}"
-                    )
                 except IntegrityError as exc:
-                    logger.error(f"IntegrityError al guardar la oportunidad de arbitraje para {pair1}-{pair2}-{pair3}: {exc}")
-                    # Calcular el backoff exponencial
-                    #countdown = 2 ** self.request.retries
-                    #logger.info(f"Reintentando en {countdown} segundos...")
-                    #raise self.retry(exc=exc, countdown=countdown)
-
+                    logger.error(f"Error al guardar la oportunidad: {exc}")
+                    continue
             else:
-                logger.debug(
-                    f"No hay ganancia en el ciclo: {pair1.base_currency} -> "
-                    f"{pair2.base_currency} -> {pair3.base_currency}."
-                )
+                logger.debug(f"No hay ganancia en la ruta: {symbol_1} -> {symbol_2} -> {symbol_3}::: {profit}")
 
-        logger.info("Revisión de todas las oportunidades de arbitraje completada.")
+        except Exception as e:
+            logger.warning(f"Error al procesar la ruta {symbol_1} -> {symbol_2} -> {symbol_3}: {e}")
+            continue
 
-    except Exception as e:
-        logger.error(f"Error al revisar todas las oportunidades de arbitraje: {e}")
-        #raise self.retry(exc=e, countdown=60)  # Reintentar en 1 minuto
+    logger.info(f"Revisión de todas las oportunidades de arbitraje completada. {time.time()}")
+
+
+def calculate_profit(price_1, price_2, price_3, fee_rate, slippage_rate):
+    """
+    Calcula la ganancia potencial de una ruta de arbitraje considerando comisiones y deslizamiento.
+
+    Parámetros:
+        price_1 (Decimal): Precio del primer par.
+        price_2 (Decimal): Precio del segundo par.
+        price_3 (Decimal): Precio del tercer par.
+        fee_rate (Decimal): Comisión aplicada en cada operación.
+        slippage_rate (Decimal): Deslizamiento estimado en cada operación.
+
+    Retorna:
+        Decimal: Ganancia neta estimada, o 0 si no hay ganancia.
+    """
+    try:
+        # Convertir los precios a Decimal
+        price_1 = Decimal(price_1)
+        price_2 = Decimal(price_2)
+        price_3 = Decimal(price_3)
+
+        # Ajustar precios con el deslizamiento
+        adjusted_price_1 = price_1 * (1 - slippage_rate)
+        adjusted_price_2 = price_2 * (1 - slippage_rate)
+        adjusted_price_3 = price_3 * (1 - slippage_rate)
+
+        # Calcular el valor final después de un ciclo de arbitraje
+        final_value = adjusted_price_1 * adjusted_price_2 * adjusted_price_3
+        
+        # Aplicar comisiones
+        fee_multiplier = (1 - fee_rate) ** 3
+        net_value = final_value * fee_multiplier
+
+        # Retornar ganancia si existe
+        return net_value - 1 if net_value > 1 else 0
+    except InvalidOperation as e:
+        logger.warning(f"Error al calcular el profit: {e}")
+        return 0
 
 
 @shared_task
 def check_arbitrage_opportunities_realtime():
-    
-    #Revisa precios en Redis y calcula si hay arbitraje
-    #con BTC, ETH, USDT, etc. (ejemplo básico)
-    
-    #r = redis.Redis(host="redis", port="6379", db=0)
-
-    # Definamos un triángulo simple
-    symbols = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
-
-    # Parámetros de trading (ajusta según tu estrategia)
-    FEE_RATE = Decimal('0.001')        # 0.1% de comisión
-    SLIPPAGE_RATE = Decimal('0.0005')  # 0.05% de slippage (ejemplo)
-
-    try:
-        # Obtener los precios desde Redis
-        prices = {}
-        for sym in symbols:
-            #price = r.get(f"price:{sym}")
-            price = get_price_from_redis(sym)
-            if price is None:
-                logger.warning(f"No hay precio en Redis para {sym}")
-                return  # Salir de la tarea si falta algún precio
-            prices[sym] = price
-            logger.debug(f"Precio obtenido de Redis - {sym}::: {price}")
-
-        # Asignar los precios a variables para claridad
-        btc_usdt = prices["BTCUSDT"]  # USDT por 1 BTC
-        eth_usdt = prices["ETHUSDT"]  # USDT por 1 ETH
-        eth_btc = prices["ETHBTC"]    # BTC por 1 ETH
-
-        # Iniciar el cálculo de arbitraje con 1 BTC
-        profit = calculate_profit(btc_usdt, eth_usdt, eth_btc, FEE_RATE, SLIPPAGE_RATE)
-
-        if profit > 0:
-            # Describir la ruta de arbitraje
-            route = "BTCUSDT -> ETHUSDT -> ETHBTC -> BTCUSDT"
-
-            # Registrar la oportunidad de arbitraje
-            try:
-                pair1 = MarketPair.objects.get(base_currency="BTC", quote_currency="USDT", exchange='Binance')
-                pair2 = MarketPair.objects.get(base_currency="ETH", quote_currency="USDT", exchange='Binance')
-                pair3 = MarketPair.objects.get(base_currency="ETH", quote_currency="BTC", exchange='Binance')
-            except MarketPair.DoesNotExist as e:
-                logger.error(f"No se encontraron los MarketPairs necesarios para el arbitraje: {e}")
-                return
-            
-            # Registrar la oportunidad de arbitraje usando `update_or_create`
-            try:
-                with transaction.atomic():
-                    # Intentar obtener el objeto con un lock
-                    opportunity, created = ArbitrageOpportunity.objects.select_for_update().get_or_create(
-                        pair_1=pair1,
-                        pair_2=pair2,
-                        pair_3=pair3,
-                        defaults={'profit': profit}
-                    )
-                    if not created:
-                        # Actualizar el profit si ya existe
-                        opportunity.profit = profit
-                        opportunity.save()
-                logger.info(
-                    f"Oportunidad de arbitraje encontrada: {pair1.base_currency} -> "
-                    f"{pair2.base_currency} -> {pair3.base_currency}. Ganancia: {profit}"
-                )
-            except IntegrityError as exc:
-                logger.error(f"IntegrityError al guardar la oportunidad de arbitraje para {pair1}-{pair2}-{pair3}: {exc}")
-                # Calcular el backoff exponencial
-                #countdown = 2 ** self.request.retries
-                #logger.info(f"Reintentando en {countdown} segundos...")
-                #raise self.retry(exc=exc, countdown=countdown)
-
-
-            if created:
-                logger.info(f"Oportunidad de arbitraje encontrada: {route} - Ganancia: {profit:.8f} BTC")
-            else:
-                logger.debug(f"Oportunidad de arbitraje ya registrada: {route} - Ganancia: {profit:.8f} BTC")
-        else:
-            logger.debug("No hay oportunidad de arbitraje en este ciclo.")
-
-    except Exception as e:
-        logger.error(f"Error al revisar todas las oportunidades de arbitraje: {e}")
-        #raise self.retry(exc=e, countdown=60)  # Reintentar en 1 minuto
+    pass
         
