@@ -1,7 +1,8 @@
 from django.urls import path
-from . import views
+from dashboard.views import dashboard, get_latest_opportunities, get_balances
 
 urlpatterns = [
-    path('arbitrage-opportunities/', views.arbitrage_opportunities_list, name='arbitrage_opportunities_list'),
-    # Otras rutas...
+    path('', dashboard, name='dashboard'),
+    path('api/latest-opportunities/', get_latest_opportunities, name='latest-opportunities'),
+    path('api/balances/', get_balances, name='get-balances'), 
 ]
