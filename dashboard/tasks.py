@@ -3,8 +3,7 @@ import os
 from celery import shared_task
 from binance.client import Client
 from .models import HistoricalPrice, ArbitrageOpportunity, Symbol
-from .utils.arbitrage import calculate_profit, find_arbitrage_routes, get_price
-
+from .utils.arbitrage import calculate_profit, find_arbitrage_routes, get_price, handle_arbitrage_opportunity
 from django.db.models import F
 from django.utils.timezone import now
 from django.db import transaction, IntegrityError
@@ -26,6 +25,9 @@ TESTNET_BASE_URL = os.getenv('TESTNET_BASE_URL')  # URL del Testnet
 # Cliente configurado para el entorno de pruebas
 client = Client(BINANCE_TESTNET_API_KEY, BINANCE_TESTNET_API_SECRET)
 client.API_URL = TESTNET_BASE_URL
+
+FEE_RATE = Decimal('0.001')  # 0.1 % Comisión
+SLIPPAGE_RATE = Decimal('0.0005')  # 0.05% Deslizamiento de precios
 
 
 @shared_task
@@ -90,7 +92,7 @@ def fetch_binance_prices():
             symbol_id = Symbol.objects.get(symbol=symbol)
 
             # Validar si el precio o volumen son demasiado grandes
-            if price >= Decimal('10000000000') or volume >= Decimal('10000000000'):
+            if price >= Decimal('100000000000.0000000000') or volume >= Decimal('100000000000.0000000000'):
                 logger.warning(f"Valor fuera de rango: SYMBOL={symbol}, PRICE={price}, VOLUME={volume}")
                 continue
 
@@ -122,8 +124,7 @@ def check_arbitrage_opportunities():
     y verifica si hay oportunidades de ganancia.
     """
     # Parámetros de trading
-    FEE_RATE = Decimal('0.001')  # 0.1 % Comisión
-    SLIPPAGE_RATE = Decimal('0.0005')  # 0.05% Deslizamiento de precios
+    
 
     logger.info(f"Iniciando el cálculo de oportunidades de arbitraje...{time.time()}")
 
@@ -186,7 +187,7 @@ def check_arbitrage_opportunities():
             logger.debug(f"Profit para la ruta: {profit}")
 
             if profit > 0:
-                logger.info(f"Oportunidad de arbitraje encontrada: {symbol_1} -> {symbol_2} -> {symbol_3}. Ganancia: {profit}")
+                #logger.info(f"Oportunidad de arbitraje encontrada: {symbol_1} -> {symbol_2} -> {symbol_3}. Ganancia: {profit}")
 
                 # Guardar la oportunidad en la base de datos
                 try:
@@ -217,46 +218,21 @@ def check_arbitrage_opportunities():
     logger.info(f"Revisión de todas las oportunidades de arbitraje completada. {time.time()}")
 
 
-def calculate_profit(price_1, price_2, price_3, fee_rate, slippage_rate):
-    """
-    Calcula la ganancia potencial de una ruta de arbitraje considerando comisiones y deslizamiento.
-
-    Parámetros:
-        price_1 (Decimal): Precio del primer par.
-        price_2 (Decimal): Precio del segundo par.
-        price_3 (Decimal): Precio del tercer par.
-        fee_rate (Decimal): Comisión aplicada en cada operación.
-        slippage_rate (Decimal): Deslizamiento estimado en cada operación.
-
-    Retorna:
-        Decimal: Ganancia neta estimada, o 0 si no hay ganancia.
-    """
-    try:
-        # Convertir los precios a Decimal
-        price_1 = Decimal(price_1)
-        price_2 = Decimal(price_2)
-        price_3 = Decimal(price_3)
-
-        # Ajustar precios con el deslizamiento
-        adjusted_price_1 = price_1 * (1 - slippage_rate)
-        adjusted_price_2 = price_2 * (1 - slippage_rate)
-        adjusted_price_3 = price_3 * (1 - slippage_rate)
-
-        # Calcular el valor final después de un ciclo de arbitraje
-        final_value = adjusted_price_1 * adjusted_price_2 * adjusted_price_3
-        
-        # Aplicar comisiones
-        fee_multiplier = (1 - fee_rate) ** 3
-        net_value = final_value * fee_multiplier
-
-        # Retornar ganancia si existe
-        return net_value - 1 if net_value > 1 else 0
-    except InvalidOperation as e:
-        logger.warning(f"Error al calcular el profit: {e}")
-        return 0
-
-
 @shared_task
-def check_arbitrage_opportunities_realtime():
-    pass
-        
+def process_arbitrage_opportunities():
+    """
+    Procesa oportunidades de arbitraje y ejecuta operaciones.
+    """
+    profitable_opportunities = ArbitrageOpportunity.objects.filter(profit__gt=0)
+
+    if not profitable_opportunities.exists():
+        logger.info("No hay oportunidades rentables disponibles.")
+        return
+
+    for opportunity in profitable_opportunities:
+        success = handle_arbitrage_opportunity(opportunity, client)
+        if success:
+            logger.info(f"Oportunidad procesada con éxito: {opportunity.route}")
+        else:
+            logger.warning(f"Fallo al procesar la oportunidad: {opportunity.route}")
+

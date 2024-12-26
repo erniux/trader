@@ -19,8 +19,8 @@ class HistoricalPrice(models.Model):
     """
     symbol = models.ForeignKey(Symbol, on_delete=models.CASCADE, related_name="prices")
     timestamp = models.DateTimeField(default=now)  # Momento del precio
-    price = models.DecimalField(max_digits=20, decimal_places=10)  # Precio
-    volume = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)  # Volumen negociado (opcional)
+    price = models.DecimalField(max_digits=25, decimal_places=10)  # Precio
+    volume = models.DecimalField(max_digits=50, decimal_places=25, null=True, blank=True)  # Volumen negociado (opcional)
 
     class Meta:
         ordering = ['-timestamp']  # Orden por fecha, del más reciente al más antiguo
@@ -30,25 +30,6 @@ class HistoricalPrice(models.Model):
 
     def __str__(self):
         return f"{self.symbol.symbol} @ {self.timestamp}: {self.price}"
-
-
-class TransactionLog(models.Model):
-    """
-    Modelo para registrar las transacciones realizadas.
-    """
-    symbol = models.ForeignKey(Symbol, on_delete=models.SET_NULL, null=True)
-    action = models.CharField(
-        max_length=20,
-        choices=[('BUY', 'Compra'), ('SELL', 'Venta')],
-        default='BUY'
-    )
-    amount = models.DecimalField(max_digits=20, decimal_places=10)  # Cantidad negociada
-    price = models.DecimalField(max_digits=20, decimal_places=10)  # Precio de ejecución
-    fee = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)  # Comisión de la operación
-    timestamp = models.DateTimeField(default=now)  # Momento de la transacción
-
-    def __str__(self):
-        return f"{self.action} {self.amount} {self.market_pair} @ {self.price}"
 
 
 class ArbitrageOpportunity(models.Model):
@@ -78,3 +59,24 @@ class ArbitrageOpportunity(models.Model):
 
     def __str__(self):
         return f"Arbitrage: {self.symbol_1.symbol} -> {self.symbol_2.symbol} -> {self.symbol_3.symbol} | Profit: {self.profit}"
+
+
+class TransactionLog(models.Model):
+    """
+    Modelo para registrar las transacciones realizadas.
+    """
+    opportunity = models.ForeignKey(ArbitrageOpportunity, on_delete=models.CASCADE, null=True)
+    symbol = models.ForeignKey(Symbol, on_delete=models.SET_NULL, null=True)
+    action = models.CharField(
+        max_length=20,
+        choices=[('BUY', 'Compra'), ('SELL', 'Venta')],
+        default='BUY'
+    )
+    amount = models.DecimalField(max_digits=20, decimal_places=10)  # Cantidad negociada
+    price = models.DecimalField(max_digits=20, decimal_places=10)  # Precio de ejecución
+    fee = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)  # Comisión de la operación
+    
+    timestamp = models.DateTimeField(default=now)  # Momento de la transacción
+
+    def __str__(self):
+        return f"{self.action} {self.amount} {self.market_pair} @ {self.price}"

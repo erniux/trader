@@ -4,10 +4,12 @@ from decimal import Decimal
 from collections import defaultdict
 import logging
 import pandas as pd
-from dashboard.models import Symbol, HistoricalPrice
+from dashboard.models import Symbol, HistoricalPrice, TransactionLog
 import redis
 from binance.client import Client
 from .redis_service import get_price_from_redis
+import time
+from decimal import Decimal, ROUND_DOWN
 
 redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
 
@@ -166,3 +168,282 @@ def get_price(symbol, binance_client):
     except Exception as e:
         logger.error(f"Error al obtener el precio de {base_symbol} desde Binance: {e}")
         return None
+    
+
+
+def execute_order(binance_client, symbol, side, quantity, price=None):
+    """
+    Ejecuta una orden en Binance.
+
+    Parámetros:
+        binance_client (Client): Cliente de Binance.
+        symbol (str): El símbolo del par (e.g., 'BTCUSDT').
+        side (str): 'BUY' o 'SELL'.
+        quantity (Decimal): Cantidad a operar.
+        price (Decimal, optional): Precio límite. Si no se proporciona, es una orden de mercado.
+
+    Retorna:
+        dict: Respuesta de Binance para la orden o None si falla.
+    """
+    try:
+        # Obtener información del símbolo y restricciones de cantidad
+        symbol_info = binance_client.get_symbol_info(symbol)
+        lot_size_filter = next(
+            (f for f in symbol_info["filters"] if f["filterType"] == "LOT_SIZE"),
+            None
+        )
+
+        if not lot_size_filter:
+            raise ValueError(f"No se encontró el filtro LOT_SIZE para el símbolo {symbol}")
+
+        min_qty = Decimal(lot_size_filter["minQty"])
+        max_qty = Decimal(lot_size_filter["maxQty"])
+        step_size = Decimal(lot_size_filter["stepSize"])
+
+        # Determinar el balance disponible
+        asset = symbol[:3] if side == "SELL" else symbol[3:]
+        balance = get_balance(binance_client, asset)
+
+        if side == "BUY" and price:
+            required_balance = quantity * Decimal(price)
+        else:
+            required_balance = quantity
+
+        if required_balance > balance:
+            raise ValueError(
+                f"Balance insuficiente para {side} {symbol}. "
+                f"Balance disponible: {balance}, Requerido: {required_balance}"
+            )
+
+        # Ajustar la cantidad al múltiplo más cercano de stepSize
+        adjusted_quantity = (quantity // step_size) * step_size
+
+        if adjusted_quantity < min_qty or adjusted_quantity > max_qty:
+            raise ValueError(
+                f"La cantidad ajustada {adjusted_quantity} no está dentro del rango permitido: "
+                f"{min_qty} - {max_qty}"
+            )
+
+        # Crear la orden
+        if price:
+            formatted_price = "{:.8f}".format(price).rstrip('0').rstrip('.')
+            order = binance_client.create_order(
+                symbol=symbol,
+                side=side,
+                type="LIMIT",
+                timeInForce="GTC",
+                quantity=float(adjusted_quantity),
+                price=formatted_price
+            )
+        else:
+            order = binance_client.create_order(
+                symbol=symbol,
+                side=side,
+                type="MARKET",
+                quantity=float(adjusted_quantity)
+            )
+
+        return order
+
+    except Exception as e:
+        logger.error(f"Error al ejecutar la orden {side} para {symbol}: {e}")
+        return None
+
+
+
+def simulate_trade(opportunity, side, quantity, price=None):
+    """
+    Simula una operación de compra o venta.
+
+    Parámetros:
+        opportunity (ArbitrageOpportunity): Instancia de la oportunidad de arbitraje asociada.
+        side (str): 'BUY' o 'SELL'.
+        quantity (Decimal): Cantidad a comprar/vender.
+        price (Decimal, optional): Precio límite.
+
+    Retorna:
+        dict: Detalles de la operación simulada.
+    """
+    symbol = opportunity.symbol_1.symbol if side == "BUY" else opportunity.symbol_2.symbol
+    logger.info(f"Simulación de {side} para {symbol}: Cantidad={quantity}, Precio={price}")
+    return {
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "price": price,
+        "status": "SIMULATED"
+    }
+
+def calculate_quantity(opportunity, price, binance_client):
+    """
+    Calcula la cantidad a operar basada en un capital fijo.
+
+    Parámetros:
+        opportunity (ArbitrageOpportunity): Instancia de la oportunidad.
+        price (Decimal): Precio actual del símbolo.
+
+    Retorna:
+        Decimal: Cantidad calculada.
+
+        capital_usdt = Decimal("100")  # Capital fijo en USDT
+    return capital_usdt / price
+    """
+
+    account_info = binance_client.get_account()
+    for balance in account_info["balances"]:
+        print(balance)
+
+
+    
+
+
+def calculate_profit(price_1, price_2, price_3, fee_rate, slippage_rate):
+    """
+    Calcula la ganancia potencial de una ruta de arbitraje considerando comisiones y deslizamiento.
+
+    Parámetros:
+        price_1 (Decimal): Precio del primer par.
+        price_2 (Decimal): Precio del segundo par.
+        price_3 (Decimal): Precio del tercer par.
+        fee_rate (Decimal): Comisión aplicada en cada operación.
+        slippage_rate (Decimal): Deslizamiento estimado en cada operación.
+
+    Retorna:
+        Decimal: Ganancia neta estimada, o 0 si no hay ganancia.
+    """
+    try:
+        # Convertir los precios a Decimal
+        price_1 = Decimal(price_1)
+        price_2 = Decimal(price_2)
+        price_3 = Decimal(price_3)
+
+        # Ajustar precios con el deslizamiento
+        adjusted_price_1 = price_1 * (1 - slippage_rate)
+        adjusted_price_2 = price_2 * (1 - slippage_rate)
+        adjusted_price_3 = price_3 * (1 - slippage_rate)
+
+        # Calcular el valor final después de un ciclo de arbitraje
+        final_value = adjusted_price_1 * adjusted_price_2 * adjusted_price_3
+        
+        # Aplicar comisiones
+        fee_multiplier = (1 - fee_rate) ** 3
+        net_value = final_value * fee_multiplier
+
+        # Retornar ganancia si existe
+        return net_value - 1 if net_value > 1 else 0
+    
+    except InvalidOperation as e:
+        logger.warning(f"Error al calcular el profit: {e}")
+        return 0
+
+
+from datetime import datetime
+
+def handle_arbitrage_opportunity(opportunity, binance_client):
+    """
+    Procesa una oportunidad de arbitraje específica.
+
+    Parámetros:
+        opportunity (ArbitrageOpportunity): La oportunidad de arbitraje a procesar.
+        binance_client (Client): Cliente de Binance para ejecutar órdenes.
+
+    Retorna:
+        bool: True si la operación fue exitosa, False en caso contrario.
+    """
+    try:
+        # Extraer símbolos desde la ruta de la oportunidad
+        symbols = opportunity.route.split(" -> ")
+        symbol_1_name = symbols[0]
+        symbol_2_name = symbols[1]
+        symbol_3_name = symbols[2]
+
+        logger.info(f"Procesando oportunidad: {opportunity.route}")
+
+        # Obtener precios
+        price_1 = Decimal(get_price(symbol_1_name, binance_client))
+        price_2 = Decimal(get_price(symbol_2_name.replace("_INV", ""), binance_client)) if "_INV" in symbol_2_name else Decimal(get_price(symbol_2_name, binance_client))
+        price_3 = Decimal(get_price(symbol_3_name.replace("_INV", ""), binance_client)) if "_INV" in symbol_3_name else Decimal(get_price(symbol_3_name, binance_client))
+
+        if not price_1 or not price_2 or not price_3:
+            logger.warning(f"Precios no disponibles para la oportunidad: {opportunity.route}")
+            return False
+
+        # Determinar el activo base para el balance (del primer símbolo)
+        asset = symbol_1_name[:3] if "BUY" in opportunity.route else symbol_1_name[3:]
+        balance = get_balance(binance_client, asset)
+
+        if balance <= 0:
+            logger.warning(f"Balance insuficiente para procesar la oportunidad: {opportunity.route}")
+            return False
+
+        # Calcular la cantidad a operar (ejemplo: 50% del balance disponible)
+        quantity = balance * Decimal('0.5')
+
+        # Ejecutar las órdenes
+        buy_order = execute_order(binance_client, symbol_1_name, "BUY", quantity, price_1)
+        if not buy_order:
+            logger.warning(f"Fallo al ejecutar la orden de compra para symbol_1 {symbol_1_name}")
+            return False
+
+        sell_order = execute_order(binance_client, symbol_2_name.replace("_INV", ""), "SELL", quantity, price_2)
+        if not sell_order:
+            logger.warning(f"Fallo al ejecutar la orden de venta para symbol_2 {symbol_2_name}")
+            return False
+
+        final_order = execute_order(binance_client, symbol_3_name.replace("_INV", ""), "SELL", quantity, price_3)
+        if not final_order:
+            logger.warning(f"Fallo al ejecutar la orden final para symbol_3 {symbol_3_name}")
+            return False
+
+        # Registrar las transacciones
+        for order, symbol_name, action, price in [
+            (buy_order, symbol_1_name, "BUY", price_1),
+            (sell_order, symbol_2_name, "SELL", price_2),
+            (final_order, symbol_3_name, "SELL", price_3)
+        ]:
+            try:
+                TransactionLog.objects.create(
+                    opportunity=opportunity,
+                    symbol=Symbol.objects.get(symbol=symbol_name),
+                    action=action,
+                    amount=quantity,
+                    price=price,
+                    fee=Decimal(order["fills"][0]["commission"]) if order.get("fills") else None,
+                    timestamp=datetime.now()  # Cambiar time.now() por datetime.now()
+                )
+            except Exception as e:
+                logger.error(f"Error al guardar el registro de transacción para {symbol_name}: {e}")
+
+        logger.info(f"Ciclo completado exitosamente para la ruta: {opportunity.route}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error al procesar oportunidad {opportunity.route}: {e}")
+        return False
+
+
+    
+     
+def get_balance(binance_client, asset):
+    """
+    Obtiene el balance disponible para un activo específico.
+
+    Parámetros:
+        binance_client (Client): Cliente de Binance.
+        asset (str): Nombre del activo (e.g., 'BTC', 'ETH').
+
+    Retorna:
+        Decimal: Balance disponible para el activo.
+    """
+    try:
+        account_info = binance_client.get_account()
+        for balance in account_info["balances"]:
+            if balance["asset"] == asset:
+                return Decimal(balance["free"])
+        # Si no encuentra el activo, devolver 0
+        return Decimal("0")
+    except Exception as e:
+        logger.error(f"Error al obtener el balance para {asset}: {e}")
+        return Decimal("0")
+
+ 

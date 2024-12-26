@@ -18,9 +18,9 @@ class TransactionLogAdmin(admin.ModelAdmin):
 
 @admin.register(ArbitrageOpportunity)
 class ArbitrageOpportunityAdmin(admin.ModelAdmin):
-    list_display = ('symbol_1', 'symbol_2', 'symbol_3', 'profit', 'detected_at')
+    list_display = ('symbol_1', 'symbol_2', 'symbol_3', 'profit', 'detected_at', 'route')
     list_filter = ('symbol_1', 'symbol_2', 'symbol_3', 'detected_at')
-    search_fields = ('symbol_1__symbol', 'symbol_2__symbol', 'symbol_3__symbol')
+    search_fields = ('symbol_1__symbol', 'symbol_2__symbol', 'symbol_3__symbol', 'route')
     date_hierarchy = 'detected_at'
 
 

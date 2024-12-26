@@ -1,7 +1,3 @@
-
-Memory updated
-¡Excelente idea! Usar Docker, Django, y Celery es una configuración poderosa para construir un sistema escalable y bien organizado. Aquí tienes un plan paso a paso para que podamos empezar:
-
 1. Configuración del Proyecto
 a. Crea un entorno Dockerizado:
 Vamos a configurar un entorno con:
@@ -35,6 +31,7 @@ trader/
 │   └── views.py              # Lógica de las vistas
 ├── db_data/                  # (Opcional) Datos persistentes para PostgreSQL
 ├── redis_data/               # (Opcional) Datos persistentes para 
+|── realtime                  # Tareas automatizadas para redis (precios guardados en redis en tiempo real)
 
 2. Construcción del Sistema
 a. Django:
@@ -58,20 +55,34 @@ Define funciones en Python para:
 Calcular rutas de arbitraje.
 Comparar precios en tiempo real.
 Integra estas funciones en las tareas de Celery.
+
 3. Iteración del Desarrollo
 Primera Fase: API básica con Django y tareas simples en Celery.
 Segunda Fase: Conexión a una API real como Binance.
 Tercera Fase: Simulador para probar rutas de arbitraje.
 Cuarta Fase: Ejecución automatizada de operaciones (con cuidado).
 
+=============================
+TERCERA FASE:
+=============================
+Crear Tareas para actualizar preciso, buscar rutas y buscar oportunidades
+tareas automatizadas con celery.
 
-============================
-Primera Fase: API básica con Django y tareas simples en Celery.
-Segunda Fase: Conexión a una API real como Binance.
-Tercera Fase: Simulador para probar rutas de arbitraje.
-Cuarta Fase: Ejecución automatizada de operaciones (con cuidado).
+=============================
+CUARTA FASE:
+=============================
+Plan de acción
+Preparar el entorno para operaciones:
 
+Confirmar que estamos trabajando con el entorno de testnet de Binance para evitar riesgos.
+Configurar un sistema para registrar los resultados de las operaciones.
+Simular operaciones de compra/venta:
 
-excelente. Vamos a Construir el sistema: por ahora ya he creado el proyecto (trader) y la app se llama Dashboard. El siguiente paso es: Modelos: Para guardar pares de mercado, precios históricos, y logs de transacciones.
+Probar la lógica de compra y venta sin realizar operaciones reales.
+Ejecutar operaciones reales en testnet:
 
-Que complicado es tener dos cuentas de github
+Integrar la lógica de compra/venta utilizando la API de Binance.
+Registrar y evaluar resultados:
+
+Guardar los resultados de las operaciones en la base de datos para análisis posterior.
+

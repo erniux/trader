@@ -15,6 +15,9 @@ services:
   ws_listener:
     build: .
     container_name: ws_listener
+    entrypoint: ["sh", "/trader/entrypoint.sh"]
+    environment:
+      RUN_MIGRATIONS: "true"  # Solo el servicio web ejecuta las migraciones
     command: python realtime/ws_listener.py
     depends_on:
       - redis
@@ -40,13 +43,15 @@ services:
       - 8000:8000
     image: trader:trader
     container_name: trader_web
-    command: "python manage.py runserver 0.0.0.0:8000"
+    environment:
+      RUN_MIGRATIONS: "false"  # Solo el servicio web ejecuta las migraciones
     depends_on:
       - redis
       - db
       - ws_listener
     env_file:
       - .env
+    
 
   #Celery
   #celery:
@@ -69,6 +74,8 @@ services:
       command: celery -A trader worker --loglevel=info
       volumes:
       - .:/trader
+      environment:
+        RUN_MIGRATIONS: "false"  # Este servicio no ejecuta migraciones
       depends_on:
         - redis
         - web
