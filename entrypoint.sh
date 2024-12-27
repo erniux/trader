@@ -9,8 +9,8 @@ echo "Base de datos disponible."
 
 # Ejecutar migraciones
 echo "Ejecutando makemigrations y migrate..."
-python manage.py makemigrations --noinput
-python manage.py migrate --noinput
+python manage.py makemigrations 
+python manage.py migrate 
 
 # Crear superusuario si no existe
 echo "Creando superusuario..."

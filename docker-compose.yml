@@ -1,28 +1,4 @@
 services:
-
-  #Redis
-  redis:
-    image: redis:alpine
-    container_name: redis_container
-    ports:
-    - "6379:6379"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    env_file:
-      - .env
-
-  ws_listener:
-    build: .
-    container_name: ws_listener
-    entrypoint: ["sh", "/trader/entrypoint.sh"]
-    environment:
-      RUN_MIGRATIONS: "true"  # Solo el servicio web ejecuta las migraciones
-    command: python realtime/ws_listener.py
-    depends_on:
-      - redis
-    env_file:
-      - .env
   
   #Database
   db:
@@ -43,39 +19,47 @@ services:
       - 8000:8000
     image: trader:trader
     container_name: trader_web
-    environment:
-      RUN_MIGRATIONS: "false"  # Solo el servicio web ejecuta las migraciones
+    #environment:
+    #  RUN_MIGRATIONS: "false"  # Solo el servicio web ejecuta las migraciones
     depends_on:
       - redis
       - db
       - ws_listener
     env_file:
+      - .env    
+
+#Redis
+  redis:
+    image: redis:alpine
+    container_name: redis_container
+    ports:
+    - "6379:6379"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    env_file:
       - .env
-    
 
-  #Celery
-  #celery:
-  #  restart: always
-  #  build:
-  #    context: .
-  #  command: "celery -A trader worker -l info"
-  #  volumes:
-  #    - .:/trader
-  #  container_name: celery_container
-  #  depends_on:
-  #  - redis
-  #  - web
-  #  env_file:
-  #    - .env
-
+  ws_listener:
+    build: .
+    container_name: ws_listener
+    #entrypoint: ["sh", "/trader/entrypoint.sh"]
+    #environment:
+    #  RUN_MIGRATIONS: "true"  # Solo el servicio web ejecuta las migraciones
+    command: python realtime/ws_listener.py
+    depends_on:
+      - redis
+    env_file:
+      - .env
+      
   celery_worker:
       build: .
       container_name: trader_celery_worker
       command: celery -A trader worker --loglevel=info
       volumes:
       - .:/trader
-      environment:
-        RUN_MIGRATIONS: "false"  # Este servicio no ejecuta migraciones
+      #environment:
+      #  RUN_MIGRATIONS: "false"  # Este servicio no ejecuta migraciones
       depends_on:
         - redis
         - web
