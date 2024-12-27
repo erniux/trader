@@ -4,7 +4,7 @@ ENV PYTHINUNBUFFERED=1
 RUN apt-get update && apt-get install -y netcat-openbsd
 
 WORKDIR /trader
-COPY requirements.txt /trader/
+COPY requirements.txt /trader/requirements.txt
 COPY entrypoint.sh /trader/entrypoint.sh
 
 RUN pip install --upgrade pip

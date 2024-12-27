@@ -1,5 +1,6 @@
 #!/bin/sh
 
+if [ "$RUN_ENTRYPOINT" = "true" ]; then
 # Esperar a que la base de datos esté lista
 echo "Esperando a que la base de datos esté lista..."
 while ! nc -z db 5432; do
@@ -34,6 +35,7 @@ python manage.py shell <<EOF
 from dashboard.tasks import fetch_and_save_symbols_with_time
 fetch_and_save_symbols_with_time.delay()
 EOF
+fi
 
 
 exec "$@"

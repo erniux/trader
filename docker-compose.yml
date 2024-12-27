@@ -1,6 +1,5 @@
 services:
 
-  #Redis
   redis:
     image: redis:alpine
     container_name: redis_container
@@ -11,20 +10,7 @@ services:
       - REDIS_PORT=6379
     env_file:
       - .env
-
-  ws_listener:
-    build: .
-    container_name: ws_listener
-    entrypoint: ["sh", "/trader/entrypoint.sh"]
-    environment:
-      RUN_MIGRATIONS: "true"  # Solo el servicio web ejecuta las migraciones
-    command: python realtime/ws_listener.py
-    depends_on:
-      - redis
-    env_file:
-      - .env
   
-  #Database
   db:
     image: postgres
     volumes:
@@ -33,7 +19,6 @@ services:
     env_file:
       - .env
   
-  # Django Application
   web:
     build: 
       context: .
@@ -44,29 +29,12 @@ services:
     image: trader:trader
     container_name: trader_web
     environment:
-      RUN_MIGRATIONS: "false"  # Solo el servicio web ejecuta las migraciones
+      RUN_ENTRYPOINT: "true"
     depends_on:
       - redis
       - db
-      - ws_listener
     env_file:
       - .env
-    
-
-  #Celery
-  #celery:
-  #  restart: always
-  #  build:
-  #    context: .
-  #  command: "celery -A trader worker -l info"
-  #  volumes:
-  #    - .:/trader
-  #  container_name: celery_container
-  #  depends_on:
-  #  - redis
-  #  - web
-  #  env_file:
-  #    - .env
 
   celery_worker:
       build: .
@@ -74,8 +42,8 @@ services:
       command: celery -A trader worker --loglevel=info
       volumes:
       - .:/trader
-      environment:
-        RUN_MIGRATIONS: "false"  # Este servicio no ejecuta migraciones
+      #environment:
+      #  RUN_MIGRATIONS: "false"  # Este servicio no ejecuta migraciones
       depends_on:
         - redis
         - web
@@ -93,3 +61,15 @@ services:
         - celery_worker
       env_file:
         - .env    
+
+  ws_listener:
+    build: .
+    container_name: ws_listener
+    command: python realtime/ws_listener.py
+    depends_on:
+      - redis
+      - db
+      - web
+      - celery_beat
+    env_file:
+      - .env
