@@ -41,9 +41,10 @@ Integra estas funciones en las tareas de Celery.
 
 ### Comandos Importantes:
 #Reiniciar la base de datos:
+~~~
 docker exec -it postgres_db psql -U postgres -d trader
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 GRANT ALL ON SCHEMA public TO postgres;
 GRANT ALL ON SCHEMA public TO public;
-
+~~~
