@@ -10,6 +10,8 @@ from binance.client import Client
 from .redis_service import get_price_from_redis
 import time
 from decimal import Decimal, ROUND_DOWN
+from datetime import datetime
+
 
 redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
 
@@ -170,84 +172,63 @@ def get_price(symbol, binance_client):
         return None
     
 
+from decimal import Decimal, ROUND_DOWN
 
-def execute_order(binance_client, symbol, side, quantity, price=None):
-    """
-    Ejecuta una orden en Binance.
+def place_buy_order(binance_client, symbol, quantity_dec, price_dec):
+    symbol_info = binance_client.get_symbol_info(symbol)
+    base_asset = symbol_info['baseAsset']
+    quote_asset = symbol_info['quoteAsset']
 
-    Parámetros:
-        binance_client (Client): Cliente de Binance.
-        symbol (str): El símbolo del par (e.g., 'BTCUSDT').
-        side (str): 'BUY' o 'SELL'.
-        quantity (Decimal): Cantidad a operar.
-        price (Decimal, optional): Precio límite. Si no se proporciona, es una orden de mercado.
+    # Ejemplo de obtención de filtros
+    lot_size_filter = next(
+        (f for f in symbol_info["filters"] if f["filterType"] == "LOT_SIZE"), None
+    )
+    min_qty = Decimal(lot_size_filter["minQty"])
+    max_qty = Decimal(lot_size_filter["maxQty"])
+    step_size = Decimal(lot_size_filter["stepSize"])
 
-    Retorna:
-        dict: Respuesta de Binance para la orden o None si falla.
-    """
-    try:
-        # Obtener información del símbolo y restricciones de cantidad
-        symbol_info = binance_client.get_symbol_info(symbol)
-        lot_size_filter = next(
-            (f for f in symbol_info["filters"] if f["filterType"] == "LOT_SIZE"),
-            None
+    # 1) Revisar balance en quote_asset
+    balance_quote_raw = get_balance(binance_client, quote_asset)
+    balance_quote = Decimal(str(balance_quote_raw))  # Convertir a Decimal
+
+    # 2) Calcular required_balance
+    required_balance = quantity_dec * price_dec
+
+    if required_balance > balance_quote:
+        # Ajustar automáticamente la cantidad
+        max_quantity = balance_quote / price_dec
+        logger.warning(
+            f"Balance insuficiente para BUY {symbol}. Ajustando la cantidad: "
+            f"{quantity_dec} -> {max_quantity}"
         )
+        quantity_dec = max_quantity
 
-        if not lot_size_filter:
-            raise ValueError(f"No se encontró el filtro LOT_SIZE para el símbolo {symbol}")
+    # 3) Ajustar por step_size (ROUND_DOWN)
+    quantity_dec = quantity_dec.quantize(step_size, rounding=ROUND_DOWN)
 
-        min_qty = Decimal(lot_size_filter["minQty"])
-        max_qty = Decimal(lot_size_filter["maxQty"])
-        step_size = Decimal(lot_size_filter["stepSize"])
-
-        # Determinar el balance disponible
-        asset = symbol[:3] if side == "SELL" else symbol[3:]
-        balance = get_balance(binance_client, asset)
-
-        if side == "BUY" and price:
-            required_balance = quantity * Decimal(price)
-        else:
-            required_balance = quantity
-
-        if required_balance > balance:
-            raise ValueError(
-                f"Balance insuficiente para {side} {symbol}. "
-                f"Balance disponible: {balance}, Requerido: {required_balance}"
-            )
-
-        # Ajustar la cantidad al múltiplo más cercano de stepSize
-        adjusted_quantity = (quantity // step_size) * step_size
-
-        if adjusted_quantity < min_qty or adjusted_quantity > max_qty:
-            raise ValueError(
-                f"La cantidad ajustada {adjusted_quantity} no está dentro del rango permitido: "
-                f"{min_qty} - {max_qty}"
-            )
-
-        # Crear la orden
-        if price:
-            formatted_price = "{:.8f}".format(price).rstrip('0').rstrip('.')
-            order = binance_client.create_order(
-                symbol=symbol,
-                side=side,
-                type="LIMIT",
-                timeInForce="GTC",
-                quantity=float(adjusted_quantity),
-                price=formatted_price
-            )
-        else:
-            order = binance_client.create_order(
-                symbol=symbol,
-                side=side,
-                type="MARKET",
-                quantity=float(adjusted_quantity)
-            )
-
-        return order
-
-    except Exception as e:
-        logger.error(f"Error al ejecutar la orden {side} para {symbol}: {e}")
+    # 4) Validar min_qty y max_qty
+    if quantity_dec < min_qty:
+        logger.error(
+            f"La cantidad ajustada {quantity_dec} es menor que el minQty {min_qty}. Cancelando orden."
+        )
         return None
+
+    if quantity_dec > max_qty:
+        logger.error(
+            f"La cantidad ajustada {quantity_dec} es mayor que el maxQty {max_qty}. Cancelando orden."
+        )
+        return None
+
+    # 5) Crear orden
+    order = binance_client.create_order(
+        symbol=symbol,
+        side="BUY",
+        type="LIMIT",
+        timeInForce="GTC",
+        quantity=float(quantity_dec),
+        price=str(price_dec)
+    )
+    return order
 
 
 
@@ -293,10 +274,6 @@ def calculate_quantity(opportunity, price, binance_client):
     for balance in account_info["balances"]:
         print(balance)
 
-
-    
-
-
 def calculate_profit(price_1, price_2, price_3, fee_rate, slippage_rate):
     """
     Calcula la ganancia potencial de una ruta de arbitraje considerando comisiones y deslizamiento.
@@ -336,22 +313,15 @@ def calculate_profit(price_1, price_2, price_3, fee_rate, slippage_rate):
         logger.warning(f"Error al calcular el profit: {e}")
         return 0
 
-
-from datetime import datetime
-
 def handle_arbitrage_opportunity(opportunity, binance_client):
     """
     Procesa una oportunidad de arbitraje específica.
-
-    Parámetros:
-        opportunity (ArbitrageOpportunity): La oportunidad de arbitraje a procesar.
-        binance_client (Client): Cliente de Binance para ejecutar órdenes.
 
     Retorna:
         bool: True si la operación fue exitosa, False en caso contrario.
     """
     try:
-        # Extraer símbolos desde la ruta de la oportunidad
+        # Extraer símbolos desde la ruta de la oportunidad, asumiendo formato "SYMBOL1 -> SYMBOL2 -> SYMBOL3"
         symbols = opportunity.route.split(" -> ")
         symbol_1_name = symbols[0]
         symbol_2_name = symbols[1]
@@ -359,60 +329,80 @@ def handle_arbitrage_opportunity(opportunity, binance_client):
 
         logger.info(f"Procesando oportunidad: {opportunity.route}")
 
-        # Obtener precios
-        price_1 = Decimal(get_price(symbol_1_name, binance_client))
-        price_2 = Decimal(get_price(symbol_2_name.replace("_INV", ""), binance_client)) if "_INV" in symbol_2_name else Decimal(get_price(symbol_2_name, binance_client))
-        price_3 = Decimal(get_price(symbol_3_name.replace("_INV", ""), binance_client)) if "_INV" in symbol_3_name else Decimal(get_price(symbol_3_name, binance_client))
+        # Obtener precios y manejar _INV
+        # (Si un símbolo tiene "_INV", significa que debemos tomar 1 / precio real)
+        def _get_price(sym):
+            is_inv = sym.endswith("_INV")
+            real_sym = sym.replace("_INV", "")
+            p = get_price(real_sym, binance_client)
+            if p:
+                return Decimal(str(1 / p)) if is_inv else Decimal(str(p))
+            return None
+
+        price_1 = _get_price(symbol_1_name)
+        price_2 = _get_price(symbol_2_name)
+        price_3 = _get_price(symbol_3_name)
 
         if not price_1 or not price_2 or not price_3:
             logger.warning(f"Precios no disponibles para la oportunidad: {opportunity.route}")
             return False
 
-        # Determinar el activo base para el balance (del primer símbolo)
-        asset = symbol_1_name[:3] if "BUY" in opportunity.route else symbol_1_name[3:]
-        balance = get_balance(binance_client, asset)
-
-        if balance <= 0:
-            logger.warning(f"Balance insuficiente para procesar la oportunidad: {opportunity.route}")
+        # Determinar balance disponible en el activo base del primer símbolo
+        # Ojo que la lógica "[:3]" puede fallar con DOGE, etc.
+        # En la nueva versión, no hace tanta falta, porque execute_spot_order
+        # hace la validación y ajuste de cantidad. Pero si deseas un
+        # 'porcentaje' de tu balance, sí lo necesitas aquí.
+        base_asset_1 = binance_client.get_symbol_info(symbol_1_name)["baseAsset"]
+        total_balance = get_balance(binance_client, base_asset_1)
+        if not total_balance or Decimal(str(total_balance)) <= 0:
+            logger.warning(f"Balance insuficiente en {base_asset_1} para procesar la oportunidad.")
             return False
 
-        # Calcular la cantidad a operar (ejemplo: 50% del balance disponible)
-        quantity = balance * Decimal('0.5')
+        # Por ejemplo, 50% de tu balance:
+        quantity_dec = Decimal(str(total_balance)) * Decimal("0.5")
 
-        # Ejecutar las órdenes
-        buy_order = execute_order(binance_client, symbol_1_name, "BUY", quantity, price_1)
+        # 1) Comprar el symbol_1 baseAsset al precio price_1
+        #    (o si el symbol_1 es invertido, ya lo resolvimos con _get_price)
+        buy_order = execute_spot_order(binance_client, symbol_1_name, "BUY", quantity_dec, price_1)
         if not buy_order:
-            logger.warning(f"Fallo al ejecutar la orden de compra para symbol_1 {symbol_1_name}")
+            logger.warning(f"Fallo al ejecutar la orden de compra para {symbol_1_name}")
             return False
 
-        sell_order = execute_order(binance_client, symbol_2_name.replace("_INV", ""), "SELL", quantity, price_2)
+        # 2) Vender en el segundo símbolo
+        sell_order = execute_spot_order(binance_client, symbol_2_name.replace("_INV", ""), "SELL", quantity_dec, price_2)
         if not sell_order:
-            logger.warning(f"Fallo al ejecutar la orden de venta para symbol_2 {symbol_2_name}")
+            logger.warning(f"Fallo al ejecutar la orden de venta para {symbol_2_name}")
             return False
 
-        final_order = execute_order(binance_client, symbol_3_name.replace("_INV", ""), "SELL", quantity, price_3)
+        # 3) Vender en el tercer símbolo
+        final_order = execute_spot_order(binance_client, symbol_3_name.replace("_INV", ""), "SELL", quantity_dec, price_3)
         if not final_order:
-            logger.warning(f"Fallo al ejecutar la orden final para symbol_3 {symbol_3_name}")
+            logger.warning(f"Fallo al ejecutar la orden final para {symbol_3_name}")
             return False
 
-        # Registrar las transacciones
-        for order, symbol_name, action, price in [
+        # Registrar transacciones
+        for order, sym_name, action, px in [
             (buy_order, symbol_1_name, "BUY", price_1),
             (sell_order, symbol_2_name, "SELL", price_2),
             (final_order, symbol_3_name, "SELL", price_3)
         ]:
             try:
+                # Recuperar el objeto Symbol real (sin "_INV")
+                real_sym_name = sym_name.replace("_INV", "")
+                sym_obj = Symbol.objects.get(symbol=real_sym_name)
+                fee = Decimal(order["fills"][0]["commission"]) if order.get("fills") else None
+
                 TransactionLog.objects.create(
                     opportunity=opportunity,
-                    symbol=Symbol.objects.get(symbol=symbol_name),
+                    symbol=sym_obj,
                     action=action,
-                    amount=quantity,
-                    price=price,
-                    fee=Decimal(order["fills"][0]["commission"]) if order.get("fills") else None,
-                    timestamp=datetime.now()  # Cambiar time.now() por datetime.now()
+                    amount=quantity_dec,
+                    price=px,
+                    fee=fee,
+                    timestamp=datetime.now() 
                 )
             except Exception as e:
-                logger.error(f"Error al guardar el registro de transacción para {symbol_name}: {e}")
+                logger.error(f"Error al guardar el registro de transacción para {sym_name}: {e}")
 
         logger.info(f"Ciclo completado exitosamente para la ruta: {opportunity.route}")
         return True
@@ -422,8 +412,6 @@ def handle_arbitrage_opportunity(opportunity, binance_client):
         return False
 
 
-    
-     
 def get_balance(binance_client, asset):
     """
     Obtiene el balance disponible para un activo específico.
@@ -446,4 +434,215 @@ def get_balance(binance_client, asset):
         logger.error(f"Error al obtener el balance para {asset}: {e}")
         return Decimal("0")
 
- 
+
+def execute_spot_order(binance_client, symbol, side, quantity, price=None):
+    """
+    Ejecuta una orden spot en Binance (BUY o SELL) para un símbolo específico, 
+    ajustando la cantidad y el precio a los requisitos de los filtros.
+
+    Parámetros:
+        binance_client (Client): Cliente de Binance (python-binance u otro).
+        symbol (str): Símbolo del par. Ej: 'BNBUSDT', 'ETHUSDT', etc.
+        side (str): 'BUY' o 'SELL'.
+        quantity (Decimal): Cantidad deseada en términos del baseAsset.
+        price (Decimal, opcional): Precio límite. Si es None, la orden será de mercado.
+
+    Retorna:
+        dict | None: Diccionario con la respuesta de la API de Binance si se crea la orden,
+                     o None si hubo algún fallo en la validación de filtros o en la creación.
+    """
+    try:
+        # 1. Obtener información del símbolo
+        symbol_info = binance_client.get_symbol_info(symbol)
+        if not symbol_info:
+            logger.error(f"No se encontró información para el símbolo {symbol}")
+            return None
+
+        base_asset = symbol_info["baseAsset"]
+        quote_asset = symbol_info["quoteAsset"]
+
+        # 2. Extraer filtros relevantes
+        lot_size_filter = next(
+            (f for f in symbol_info["filters"] if f["filterType"] == "LOT_SIZE"), 
+            None
+        )
+        price_filter = next(
+            (f for f in symbol_info["filters"] if f["filterType"] == "PRICE_FILTER"), 
+            None
+        )
+        min_notional_filter = next(
+            (f for f in symbol_info["filters"] if f["filterType"] == "MIN_NOTIONAL"), 
+            None
+        )
+
+        if not lot_size_filter:
+            logger.error(f"No se encontró el filtro LOT_SIZE para {symbol}")
+            return None
+
+        # 3. Parsear valores LOT_SIZE
+        min_qty = Decimal(lot_size_filter["minQty"])     # Cantidad mínima
+        max_qty = Decimal(lot_size_filter["maxQty"])     # Cantidad máxima
+        step_size = Decimal(lot_size_filter["stepSize"]) # Incremento mínimo
+
+        logger.debug(
+            f"[execute_spot_order] LOT_SIZE => minQty={min_qty}, maxQty={max_qty}, stepSize={step_size}"
+        )
+
+        # 4. Obtener balance según BUY/SELL
+        #    SELL => necesito balance del baseAsset
+        #    BUY  => necesito balance del quoteAsset para pagar
+        if side.upper() == "SELL":
+            balance_raw = get_balance(binance_client, base_asset)
+            if balance_raw is None:
+                logger.error(f"No se pudo obtener balance de {base_asset}")
+                return None
+            balance_dec = Decimal(str(balance_raw))
+            required_balance = quantity  # vendes 'quantity' unidades del baseAsset
+            logger.debug(f"Balance baseAsset({base_asset})={balance_dec}, required_balance={required_balance}")
+
+            if required_balance > balance_dec:
+                # Ajustar la cantidad a la máxima posible
+                logger.warning(
+                    f"Balance insuficiente para SELL {symbol}. Ajustando la cantidad "
+                    f"de {quantity} -> {balance_dec}"
+                )
+                quantity = balance_dec
+
+        else:  # BUY
+            balance_raw = get_balance(binance_client, quote_asset)
+            if balance_raw is None:
+                logger.error(f"No se pudo obtener balance de {quote_asset}")
+                return None
+            balance_dec = Decimal(str(balance_raw))
+
+            # Si price es None => orden MARKET (difícil saber la cantidad exacta que se ejecuta)
+            if price is None:
+                # Podrías asumir que gastarás todo tu balance, o
+                # un porcentaje, según tu lógica. Aquí damos por hecho
+                # que 'quantity' ya está calculado de otra forma.
+                required_balance = quantity  # No es exacto para MARKET, pero hacemos un check mínimo
+            else:
+                required_balance = quantity * price
+
+            logger.debug(f"Balance quoteAsset({quote_asset})={balance_dec}, required_balance={required_balance}")
+
+            if required_balance > balance_dec:
+                # Ajustar la cantidad máxima
+                if price and price > 0:
+                    max_quantity = balance_dec / price
+                else:
+                    max_quantity = Decimal("0")  # Evita division by zero
+
+                logger.warning(
+                    f"Balance insuficiente para BUY {symbol}. Ajustando la cantidad: "
+                    f"{quantity} -> {max_quantity}"
+                )
+                quantity = max_quantity
+
+        # 5. Ajustar la cantidad a stepSize con ROUND_DOWN
+        quantity_before_quantize = quantity
+        quantity = quantity.quantize(step_size, rounding=ROUND_DOWN)
+
+        logger.debug(
+            f"Cantidad antes de quantize={quantity_before_quantize} / "
+            f"después de quantize={quantity} con stepSize={step_size}"
+        )
+
+        # 6. Validar minQty y maxQty
+        if quantity < min_qty:
+            logger.error(
+                f"La cantidad ajustada {quantity} es menor que minQty {min_qty} para {symbol}. Orden cancelada."
+            )
+            return None
+        if quantity > max_qty:
+            logger.error(
+                f"La cantidad ajustada {quantity} excede maxQty {max_qty} para {symbol}. Orden cancelada."
+            )
+            return None
+
+        # 7. Validar PRICE_FILTER (si es orden LIMIT y se definió 'price')
+        #    Evita Filter failure: PRICE_FILTER
+        if price_filter and price is not None:
+            min_price = Decimal(price_filter["minPrice"])
+            max_price = Decimal(price_filter["maxPrice"])
+            tick_size = Decimal(price_filter["tickSize"])
+
+            # Ajustar el precio al tickSize
+            price_before_quantize = price
+            price = price.quantize(tick_size, rounding=ROUND_DOWN)
+
+            logger.debug(
+                f"Precio antes de quantize={price_before_quantize}, "
+                f"después de quantize={price}, tickSize={tick_size}"
+            )
+
+            if price < min_price or price > max_price:
+                logger.error(
+                    f"El precio {price} está fuera del rango [{min_price}, {max_price}] para {symbol}."
+                )
+                return None
+
+        # 8. Validar MIN_NOTIONAL (si aplica)
+        #    minNotional se refiere a la cantidad * price en la quoteAsset.
+        if min_notional_filter and price is not None and quantity > 0:
+            min_notional = Decimal(min_notional_filter["minNotional"])
+            notional = (quantity * price) if side.upper() == "BUY" else (quantity * price)
+            # Para SELL es igual: la "compra" inversa en la quote.
+
+            if notional < min_notional:
+                logger.error(
+                    f"El notional {notional} es menor que minNotional {min_notional} para {symbol}."
+                )
+                return None
+
+        # 9. Crear la orden
+        #    - Para LIMIT => pasamos 'price'.
+        #    - Para MARKET => omitimos 'price'.
+        #    - quantity como string para evitar flotantes binarios.
+
+        logger.info("=== [ORDEN SPOT] ===")
+        logger.info(f"Simbolo: {symbol}")
+        logger.info(f"side: {side.upper()}")
+        logger.info(f"Cantidad calculada (antes de quantize): {quantity_before_quantize}")
+        logger.info(f"Cantidad final (despues de quantize): {quantity}")
+        logger.info(f"minQty={min_qty}, maxQty={max_qty}, stepSize={step_size}")
+        logger.info(f"price_filter={price_filter}, min_notional_filter={min_notional_filter}")
+        if price is not None:
+            logger.info(f"Precio final={price}")
+        if min_notional_filter and price is not None:
+            min_notional = Decimal(min_notional_filter["minNotional"])
+            notional = quantity * price
+            logger.info(f"notional={notional}, minNotional={min_notional}")
+        logger.info("====================")
+
+
+
+        try:
+            if price and side.upper() in ["BUY", "SELL"]:
+                # Orden LIMIT
+                order = binance_client.create_order(
+                    symbol=symbol,
+                    side=side.upper(),
+                    type="LIMIT",
+                    timeInForce="GTC",
+                    quantity=str(quantity),
+                    price=str(price)
+                )
+            else:
+                # Orden MARKET
+                order = binance_client.create_order(
+                    symbol=symbol,
+                    side=side.upper(),
+                    type="MARKET",
+                    quantity=str(quantity),
+                )
+            logger.info(f"[execute_spot_order] Orden creada exitosamente: {order}")
+            return order
+
+        except Exception as api_error:
+            logger.error(f"Error al ejecutar la orden {side} para {symbol}: {api_error}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error inesperado en execute_spot_order para {symbol}: {e}")
+        return None

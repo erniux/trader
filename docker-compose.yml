@@ -31,7 +31,6 @@ services:
     environment:
       RUN_ENTRYPOINT: "true"
     depends_on:
-      - redis
       - db
     env_file:
       - .env
@@ -65,7 +64,7 @@ services:
   ws_listener:
     build: .
     container_name: ws_listener
-    command: python realtime/ws_listener.py
+    command: ./wait-for-web.sh web python realtime/ws_listener.py
     depends_on:
       - redis
       - db
@@ -73,3 +72,9 @@ services:
       - celery_beat
     env_file:
       - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: trader.settings
+    volumes:
+      - .:/trader
+
+

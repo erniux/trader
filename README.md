@@ -49,3 +49,12 @@ CREATE SCHEMA public;
 GRANT ALL ON SCHEMA public TO postgres;
 GRANT ALL ON SCHEMA public TO public;
 ~~~
+# Eliminar todas las imágenes, volúmenes, redes y contenedores, 
+~~~
+docker system prune -a --volumes -f
+~~~
+# Instalar manualmente un contenedor
+~~~
+docker exec -it ws_listener sh
+
+~~~

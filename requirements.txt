@@ -6,7 +6,7 @@ psycopg2-binary>=2.8
 redis>=2.8
 celery>=5.0
 django-celery-beat>=2.6
-python-binance>=1.0
+python-binance==1.0.26
 python-dotenv>=0.0.1
 requests>=2.32
 pandas>=2.2
