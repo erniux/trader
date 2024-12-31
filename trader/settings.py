@@ -153,23 +153,23 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-CELERY_BEAT_SCHEDULE = {
-    'check-symbols-every-1-day': {
-        'task': 'dashboard.tasks.fetch_binance_prices',
-        'schedule': crontab(hour=0, minute=0) #Ejecutar a la media noche
-    },
-    'fetch-binance-prices-every-minute': {
-        'task': 'dashboard.tasks.fetch_and_save_symbols_with_time',
-        'schedule': 60.0,  # Cada minuto
-    },
-    'check-arbitrage-opportunities-every-5-minutes': {
-        'task': 'dashboard.tasks.check_arbitrage_opportunities',
-        'schedule': 300.0, # Cada cinco minutos
-    },
-    'process_arbitrage_opportunities_every_10_minutes': {
-       'task': 'dashboard.tasks.process_arbitrage_opportunities',
-         'schedule': 600.0,  # cada 10 minutos
-    },
-}
+#CELERY_BEAT_SCHEDULE = {
+#    'check-symbols-every-1-day': {
+#        'task': 'dashboard.tasks.fetch_binance_prices',
+#        'schedule': crontab(hour=0, minute=0) #Ejecutar a la media noche
+#    },
+#    'fetch-binance-prices-every-minute': {
+#        'task': 'dashboard.tasks.fetch_and_save_symbols_with_time',
+#        'schedule': 60.0,  # Cada minuto
+#    },
+#    'check-arbitrage-opportunities-every-5-minutes': {
+#        'task': 'dashboard.tasks.check_arbitrage_opportunities',
+#        'schedule': 300.0, # Cada cinco minutos
+#    },
+#    'process_arbitrage_opportunities_every_10_minutes': {
+#       'task': 'dashboard.tasks.process_arbitrage_opportunities',
+#         'schedule': 600.0,  # cada 10 minutos
+#    },
+#}
 
 

@@ -10,7 +10,7 @@ from binance import ThreadedWebsocketManager
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'trader.settings')
 django.setup()
 
-from dashboard.models import Symbol  
+#from dashboard.models import Symbol  
 
 logging.basicConfig(
     level=logging.DEBUG,  # Cambia a DEBUG para más detalles
@@ -25,8 +25,8 @@ BINANCE_API_SECRET = os.getenv("BINANCE_TESTNET_API_SECRET", "")
 REDIS_HOST =  "redis"
 REDIS_PORT =  6379
 
-WATCHED_SYMBOLS = list(Symbol.objects.values_list('symbol', flat=True))   
-logger.info(WATCHED_SYMBOLS)
+#WATCHED_SYMBOLS = list(Symbol.objects.values_list('symbol', flat=True))   
+#logger.info(WATCHED_SYMBOLS)
 WATCHED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
 
 # --- INICIALIZACIÓN DE REDIS ---
