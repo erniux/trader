@@ -68,7 +68,7 @@ ROOT_URLCONF = 'trader.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, "templates")],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -199,7 +199,7 @@ CELERY_BEAT_SCHEDULE = {
     "eth_ma_cross": {
         "task": "dashboard.tasks.detectar_ma_cross",
         "schedule": 300.0,
-        "args": ("ETHUSDT", 3, 5),
+        "args": ("ETHUSDT", 5, 20),
     },
 
     "btc_rsi_extremos": {
@@ -207,6 +207,12 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 60.0,                 # cada minuto
         "args": ("BTCUSDT", 14, 30, 70),
     },
+
+    "btc_auto_trade": {
+    "task": "dashboard.tasks.ejecutar_ordenes_por_senal",
+    "schedule": 60.0,
+    "args": ("BTCUSDT",),
+},
 
     
 }

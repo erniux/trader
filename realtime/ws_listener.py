@@ -5,6 +5,7 @@ import django
 import time
 import logging
 import redis
+import json
 from binance import ThreadedWebsocketManager
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'trader.settings')
@@ -32,18 +33,29 @@ WATCHED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
 # --- INICIALIZACIÓN DE REDIS ---
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
+
 def handle_socket_message(msg):
     symbol = msg.get("s")
     last_price = msg.get("c")
 
     if symbol and last_price:
         logger.warning(f"actualizando precio para {symbol} ::: {last_price}")
-        # Guardamos el precio en Redis con la clave "price:SIMBOLO"
-        key = f"price:{symbol}"
-        r.set(key, last_price)
+
+        # Guardamos solo el precio en price:{symbol}
+        r.set(f"price:{symbol}", last_price)
+
+        # Guardamos el JSON completo del ticker en ticker:{symbol}
+        try:
+            r.set(f"ticker:{symbol}", json.dumps(msg))
+        except Exception as e:
+            logger.error(f"[WS] No se pudo guardar el ticker completo para {symbol}: {e}")
+
         logger.info(f"[WS] Actualizado {symbol} => {last_price}")
     else:
         logger.warning(f"[WS] Mensaje recibido sin datos de precio válidos: {msg}")
+
+
+
 
 def start_websocket():
     """

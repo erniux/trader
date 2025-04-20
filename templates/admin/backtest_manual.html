@@ -1,0 +1,8 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+  <h1>Ejecutar Backtest Manual</h1>
+  <form method="post">{% csrf_token %}
+    <table>{{ form.as_table }}</table>
+    <input type="submit" value="Ejecutar Backtest" class="default">
+  </form>
+{% endblock %}
