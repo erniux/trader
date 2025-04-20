@@ -46,7 +46,11 @@ INSTALLED_APPS = [
     'dashboard',
     'realtime.apps.RealtimeConfig',
     'django_celery_beat',
-    
+    "rest_framework",
+    "django_filters",
+    "rest_framework.authtoken",
+    "drf_spectacular",
+    "drf_spectacular_sidecar",
 ]
 
 MIDDLEWARE = [
@@ -146,6 +150,31 @@ STATICFILES_DIRS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+REST_FRAMEWORK = {
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,                # 50 señales por página (ajusta a gusto)
+}
+
+REST_FRAMEWORK.update({
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+})
+
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Trader Signals API",
+    "DESCRIPTION": "Endpoints para consultar señales de trading (SMA, RSI, etc.).",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,   # solo sirve vía view
+}
+
+
+
 CELERY_BROKER_URL = "redis://redis:6379/0"
 CELERY_RESULT_BACKEND = "redis://redis:6379"
 CELERY_ACCEPT_CONTENT = ['json']
@@ -153,23 +182,31 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-#CELERY_BEAT_SCHEDULE = {
-#    'check-symbols-every-1-day': {
-#        'task': 'dashboard.tasks.fetch_binance_prices',
-#        'schedule': crontab(hour=0, minute=0) #Ejecutar a la media noche
-#    },
-#    'fetch-binance-prices-every-minute': {
-#        'task': 'dashboard.tasks.fetch_and_save_symbols_with_time',
-#        'schedule': 60.0,  # Cada minuto
-#    },
-#    'check-arbitrage-opportunities-every-5-minutes': {
-#        'task': 'dashboard.tasks.check_arbitrage_opportunities',
-#        'schedule': 300.0, # Cada cinco minutos
-#    },
-#    'process_arbitrage_opportunities_every_10_minutes': {
-#       'task': 'dashboard.tasks.process_arbitrage_opportunities',
-#         'schedule': 600.0,  # cada 10 minutos
-#    },
-#}
 
+CELERY_BEAT_SCHEDULE = {
+    # cada minuto ejecuta el cruce para BTCUSDT (SMA 3/5)
+    "btc_load_prices": {
+        "task": "dashboard.tasks.load_recent_prices",
+        "schedule": 60.0,
+        "args": ("BTCUSDT", 60),          # los últimos 60 candles (~1 h)
+    },
+    "btc_ma_cross": {
+        "task": "dashboard.tasks.detectar_ma_cross",
+        "schedule": 60.0,            # en segundos
+        "args": ("BTCUSDT", 3, 5),
+    },
+    # ejemplo extra: cada 5 min para ETH
+    "eth_ma_cross": {
+        "task": "dashboard.tasks.detectar_ma_cross",
+        "schedule": 300.0,
+        "args": ("ETHUSDT", 3, 5),
+    },
 
+    "btc_rsi_extremos": {
+        "task": "dashboard.tasks.detectar_rsi_extremos",
+        "schedule": 60.0,                 # cada minuto
+        "args": ("BTCUSDT", 14, 30, 70),
+    },
+
+    
+}

@@ -58,3 +58,25 @@ GRANT ALL ON SCHEMA public TO public;
 docker exec -it ws_listener sh
 
 ~~~
+# obtener token REST
+docker-compose exec web python manage.py drf_create_token admin
+token del admin f510d2962ce2d963911c5e6599eb0d3de603b510 para consumir las APIs
+
+# Consultar los logs:
+
+http://localhost:8000/api/docs/
+http://localhost:8000/api/docs/#/trading-signals/trading_signals_retrieve
+
+
+docker compose logs -f celery_worker
+docker compose logs -f celery_beat
+docker compose logs -f web
+
+# para correr los tests 
+docker compose run --rm web pytest dashboard/tests/test_backtest.py
+
+# para reiniciar un container
+docke-compose restart <container>
+
+#para construir un container
+docker-compose build <containte>

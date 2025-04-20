@@ -31,10 +31,10 @@ echo "Iniciando el servidor de desarrollo..."
 
 # Ejecutar la tarea inicial
 echo "Ejecutando tarea inicial de Celery..."
-python manage.py shell <<EOF
-from dashboard.tasks import fetch_and_save_symbols_with_time
-fetch_and_save_symbols_with_time.delay()
-EOF
+#python manage.py shell <<EOF
+#from dashboard.tasks import fetch_and_save_symbols_with_time
+#fetch_and_save_symbols_with_time.delay()
+#EOF
 fi
 
 

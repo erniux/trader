@@ -27,8 +27,8 @@ ENV PYTHONPATH="/trader:${PYTHONPATH}"
 # Instalar dependencias de Python
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --upgrade python-binance
-
+    && pip install --upgrade python-binance \
+    && pip install djangorestframework django-filter 
 
 # Dar permisos de ejecución a los scripts
 RUN chmod +x /trader/entrypoint.sh /trader/wait-for-web.sh
