@@ -83,4 +83,25 @@ class SimulatedTrade(models.Model):
     def __str__(self):
         return f"{self.ts} | {self.side} {self.qty} {self.symbol} @ {self.price}"
 
+    @property
+    def pnl(self):
+        """
+        Retorna la ganancia/pérdida si esta es una operación SELL.
+        Se calcula como: (precio de venta - precio de compra) * cantidad
+        """
+        if self.side != "SELL":
+            return None
+        # Buscar la última compra antes de esta venta
+        from dashboard.models import SimulatedTrade
+        last_buy = (
+            SimulatedTrade.objects
+            .filter(symbol=self.symbol, side="BUY", ts__lt=self.ts)
+            .order_by("-ts")
+            .first()
+        )
+        if not last_buy:
+            return None
+        return (self.price - last_buy.price) * self.qty
+
+
     

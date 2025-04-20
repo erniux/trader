@@ -9,9 +9,20 @@ from django.utils.html import format_html
 
 @admin.register(SimulatedTrade)
 class SimulatedTradeAdmin(admin.ModelAdmin):
-    list_display = ("symbol", "side", "qty", "price", "total", "ts")
+    list_display = ("symbol", "side", "qty", "price", "total", "pnl", "ts")
     list_filter = ("symbol", "side")
     ordering = ("-ts",)
+
+    def pnl(self, obj):
+        result = obj.pnl
+        if result is None:
+            return "-"
+        color = "green" if result > 0 else "red"
+        formatted = f"{result:.2f}"
+        return format_html('<span style="color: {};">{}</span>', color, formatted)
+
+
+    pnl.short_description = "PnL"
 
 
 @admin.register(HistoricalPrice)
